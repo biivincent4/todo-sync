@@ -123,7 +123,7 @@ cp .env.example .env.local    # fill in after step 3
 
 ### 2. Create the Firebase project
 1. In the [Firebase console](https://console.firebase.google.com), create a project.
-2. Add an **Android app** with the package name `com.todosync.app`. For the development build, also add `com.todosync.app.dev`, or set `ANDROID_PACKAGE`.
+2. Add an **Android app** with the package name `com.todosync.app`. All build profiles use this package; set `ANDROID_PACKAGE` to override it.
 3. Turn on **Authentication → Sign-in method → Google**.
 4. Create a **Firestore** database in production mode.
 5. Turn on **Storage**.

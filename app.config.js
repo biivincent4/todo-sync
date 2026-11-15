@@ -12,7 +12,8 @@ module.exports = {
   userInterfaceStyle: 'automatic',
   splash: { image: './assets/splash-icon.png', resizeMode: 'contain', backgroundColor: '#3E63DD' },
   android: {
-    package: process.env.ANDROID_PACKAGE ?? (IS_DEV ? 'com.todosync.app.dev' : 'com.todosync.app'),
+    // Must match the Android app registered in Firebase (google-services.json).
+    package: process.env.ANDROID_PACKAGE ?? 'com.todosync.app',
     // Downloaded from the Firebase console; never committed (see README).
     googleServicesFile: process.env.GOOGLE_SERVICES_JSON ?? './google-services.json',
     adaptiveIcon: {
