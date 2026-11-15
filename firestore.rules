@@ -1,0 +1,120 @@
+rules_version = '2';
+
+// Data model:
+//   workspaces/{wsId}                       name, type, ownerId, members{uid: role}, memberIds[], memberProfiles{}, invitedEmails[], inviteCode
+//   workspaces/{wsId}/{tasks|lists|ideas|deliverables}/{docId}
+//   invites/{code}                          workspaceId, workspaceName, createdBy, createdAt
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function uid() { return request.auth.uid; }
+    function email() { return request.auth.token.email.lower(); }
+
+    function ws(wsId) { return get(/databases/$(database)/documents/workspaces/$(wsId)).data; }
+    function isMember(wsId) { return signedIn() && uid() in ws(wsId).memberIds; }
+    function roleIn(data) { return data.members[uid()]; }
+    function isManagerOf(data) { return signedIn() && uid() in data.memberIds && roleIn(data) in ['owner', 'admin']; }
+
+    function changed() { return request.resource.data.diff(resource.data).affectedKeys(); }
+
+    // A new workspace starts with exactly one member: its owner.
+    function validNewWorkspace(wsId) {
+      let d = request.resource.data;
+      return d.ownerId == uid()
+        && d.members.keys().hasOnly([uid()])
+        && d.members[uid()] == 'owner'
+        && d.memberIds == [uid()]
+        && d.type in ['personal', 'org']
+        && (d.type == 'org' || wsId == 'personal_' + uid());
+    }
+
+    // Adds exactly the caller as a plain member, changing nothing else about membership.
+    function addsSelfAsMember() {
+      let before = resource.data;
+      let after = request.resource.data;
+      return !(uid() in before.memberIds)
+        && after.members.diff(before.members).affectedKeys().hasOnly([uid()])
+        && after.members[uid()] == 'member'
+        && after.memberIds.hasAll(before.memberIds)
+        && after.memberIds.size() == before.memberIds.size() + 1
+        && uid() in after.memberIds
+        && after.memberProfiles.diff(before.memberProfiles).affectedKeys().hasOnly([uid()]);
+    }
+
+    // Removes exactly `target` from the workspace.
+    function removesMember(target) {
+      let before = resource.data;
+      let after = request.resource.data;
+      return target != before.ownerId
+        && !(target in after.members)
+        && after.members.diff(before.members).affectedKeys().hasOnly([target])
+        && after.memberIds.toSet() == before.memberIds.toSet().difference([target].toSet())
+        && after.memberProfiles.diff(before.memberProfiles).affectedKeys().hasOnly([target]);
+    }
+
+    match /workspaces/{wsId} {
+      // Members read their workspaces; invitees can read the workspace that invited their email.
+      allow read: if signedIn() && (uid() in resource.data.memberIds
+        || (request.auth.token.email != null && email() in resource.data.invitedEmails));
+
+      allow create: if signedIn() && validNewWorkspace(wsId);
+
+      allow update: if signedIn() && (
+        // Owners/admins manage members and settings. Ownership and type are fixed,
+        // and the owner always stays owner.
+        (isManagerOf(resource.data)
+          && !changed().hasAny(['ownerId', 'type', 'createdAt'])
+          && request.resource.data.members[resource.data.ownerId] == 'owner'
+          && request.resource.data.members.keys().toSet() == request.resource.data.memberIds.toSet()
+          && request.resource.data.members.values().hasOnly(['owner', 'admin', 'member'])
+          // Exactly one owner.
+          && request.resource.data.members.values().removeAll(['owner']).size() == request.resource.data.members.size() - 1)
+        // Any member can update their own profile entry.
+        || (uid() in resource.data.memberIds
+          && changed().hasOnly(['memberProfiles'])
+          && request.resource.data.memberProfiles.diff(resource.data.memberProfiles).affectedKeys().hasOnly([uid()]))
+        // Non-owners can leave.
+        || (uid() in resource.data.memberIds
+          && changed().hasOnly(['members', 'memberIds', 'memberProfiles'])
+          && removesMember(uid()))
+        // Accept an email invitation.
+        || (request.auth.token.email != null
+          && email() in resource.data.invitedEmails
+          && changed().hasOnly(['members', 'memberIds', 'memberProfiles', 'invitedEmails'])
+          && addsSelfAsMember()
+          && request.resource.data.invitedEmails.toSet() == resource.data.invitedEmails.toSet().difference([email()].toSet()))
+        // Join with a valid invite code for this workspace.
+        || (changed().hasOnly(['members', 'memberIds', 'memberProfiles', 'joinCode'])
+          && addsSelfAsMember()
+          && exists(/databases/$(database)/documents/invites/$(request.resource.data.joinCode))
+          && get(/databases/$(database)/documents/invites/$(request.resource.data.joinCode)).data.workspaceId == wsId)
+      );
+
+      allow delete: if signedIn() && resource.data.type == 'org' && resource.data.ownerId == uid();
+
+      // Workspace content: any member can read and write.
+      match /{col}/{docId} {
+        allow read, delete: if col in ['tasks', 'lists', 'ideas', 'deliverables'] && isMember(wsId);
+        allow create, update: if col in ['tasks', 'lists', 'ideas', 'deliverables'] && isMember(wsId)
+          && (!(col in ['tasks', 'ideas', 'deliverables']) || request.resource.data.workspaceId == wsId);
+      }
+    }
+
+    // Cross-workspace queries used for My Day and reminders:
+    //   tasks where assigneeId == me, and tasks where createdBy == me && assigneeId == null.
+    match /{path=**}/tasks/{taskId} {
+      allow read: if signedIn()
+        && (resource.data.assigneeId == uid() || resource.data.createdBy == uid());
+    }
+
+    // Invite codes: anyone signed in may look up a code they were given (no listing).
+    match /invites/{code} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if isManagerOf(ws(request.resource.data.workspaceId)) && request.resource.data.createdBy == uid();
+      allow delete: if isManagerOf(ws(resource.data.workspaceId));
+      allow update: if false;
+    }
+  }
+}

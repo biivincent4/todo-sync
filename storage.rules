@@ -1,0 +1,22 @@
+rules_version = '2';
+
+// Files live at workspaces/{wsId}/{tasks|ideas}/{docId}/{fileName} and are
+// readable/writable only by members of that workspace (checked in Firestore).
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isMember(wsId) {
+      return request.auth != null
+        && request.auth.uid in firestore.get(/databases/(default)/documents/workspaces/$(wsId)).data.memberIds;
+    }
+
+    match /workspaces/{wsId}/{col}/{docId}/{fileName} {
+      allow read, delete: if col in ['tasks', 'ideas'] && isMember(wsId);
+      allow create, update: if col in ['tasks', 'ideas'] && isMember(wsId)
+        && request.resource.size <= 25 * 1024 * 1024;
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
