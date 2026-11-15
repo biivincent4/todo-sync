@@ -3,6 +3,7 @@ const IS_DEV = process.env.APP_VARIANT === 'development';
 /** @type {import('expo/config').ExpoConfig} */
 module.exports = {
   name: IS_DEV ? 'todo-sync (dev)' : 'todo-sync',
+  owner: 'vincentbii',
   slug: 'todo-sync',
   scheme: 'todosync',
   version: '1.0.0',
@@ -46,6 +47,6 @@ module.exports = {
   extra: {
     // Web OAuth client ID from the Firebase/Google Cloud console. Not a secret, but kept out of git.
     googleWebClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
-    eas: { projectId: process.env.EAS_PROJECT_ID },
+    eas: { projectId: process.env.EAS_PROJECT_ID ?? '2d129914-b258-4b13-acd1-3b18bbbbfb02' },
   },
 };
