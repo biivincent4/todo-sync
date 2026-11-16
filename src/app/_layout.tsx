@@ -1,7 +1,7 @@
-import { router, Stack } from 'expo-router';
+import { ErrorBoundaryProps, router, Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect } from 'react';
-import { View } from 'react-native';
+import { ScrollView, Text, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
@@ -13,6 +13,23 @@ import { SettingsProvider } from '../context/SettingsContext';
 import { WorkspaceProvider } from '../context/WorkspaceContext';
 import { initialNotificationRoute, onForegroundNotification } from '../services/notifications';
 import { useTheme } from '../theme';
+
+/** Shown instead of closing the app when rendering throws. */
+export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
+  const c = useTheme();
+  return (
+    <ScrollView style={{ flex: 1, backgroundColor: c.bg }} contentContainerStyle={{ padding: 24, paddingTop: 64 }}>
+      <Text style={{ fontSize: 40 }}>⚠️</Text>
+      <Text style={{ color: c.text, fontSize: 20, fontWeight: '700', marginVertical: 8 }}>Something went wrong</Text>
+      <Text style={{ color: c.textMuted, marginBottom: 16 }} selectable>
+        {error.message}
+      </Text>
+      <Text onPress={retry} style={{ color: c.primary, fontSize: 16, fontWeight: '600' }}>
+        Try again
+      </Text>
+    </ScrollView>
+  );
+}
 
 export default function RootLayout() {
   return (

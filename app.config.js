@@ -44,6 +44,14 @@ module.exports = {
           // React Native Firebase 27's Firebase BoM ships Kotlin 2.4 metadata; older compilers can't read it.
           kotlinVersion: '2.4.0',
           extraMavenRepos: ['../../node_modules/@notifee/react-native/android/libs'],
+          // R8 (on by default for release builds) strips classes that are only created by reflection,
+          // e.g. WorkManager's Room database used by Notifee; without these the app crashes on launch.
+          extraProguardRules: [
+            '-keep class * extends androidx.room.RoomDatabase { <init>(); }',
+            '-keep class androidx.work.** { *; }',
+            '-keep class app.notifee.** { *; }',
+            '-keep class io.invertase.notifee.** { *; }',
+          ].join('\n'),
         },
       },
     ],
