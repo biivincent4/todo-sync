@@ -27,10 +27,12 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [activeId, setActiveId] = useState<string>(personalId);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     ensurePersonalWorkspace(user).catch((e) => console.warn('[workspace] personal', e));
     loadActiveWorkspace(user.uid).then((id) => id && setActiveId(id));
+    let retry: ReturnType<typeof setTimeout> | undefined;
     const unsub = subscribeWorkspaces(
       user.uid,
       (ws) => {
@@ -43,15 +45,18 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       (e) => {
         setError(e.message);
         setLoading(false);
+        // Firestore stops a listener after an error; resubscribe after a pause.
+        retry = setTimeout(() => setAttempt((a) => a + 1), 8_000);
       },
     );
     const unsubInv = user.email ? subscribeEmailInvites(user.email, setInvites) : () => undefined;
     return () => {
+      clearTimeout(retry);
       unsub();
       unsubInv();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user.uid]);
+  }, [user.uid, attempt]);
 
   // Fall back to Personal if the active workspace disappears (left or removed).
   const active = workspaces.find((w) => w.id === activeId) ?? workspaces.find((w) => w.id === personalId) ?? null;

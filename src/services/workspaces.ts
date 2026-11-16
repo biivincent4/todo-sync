@@ -8,6 +8,7 @@ import {
   getDocs,
   onSnapshot,
   query,
+  setDoc,
   updateDoc,
   where,
   writeBatch,
@@ -70,6 +71,19 @@ function newWorkspaceDoc(user: SessionUser, name: string, type: Workspace['type'
   };
 }
 
+/**
+ * Create the workspace, then its default lists as a separate write. Security rules
+ * check membership with get(), which sees the state before a batch, so lists in the
+ * same batch as the workspace would be rejected. Firestore sends the two writes in
+ * order (also after coming back online), so the lists are checked once we're a member.
+ */
+function createWorkspace(id: string, data: ReturnType<typeof newWorkspaceDoc>, now: number): void {
+  background(setDoc(doc(db(), paths.workspace(id)), clean(data)), 'create workspace');
+  const lists = writeBatch(db());
+  seedDefaultLists(id, lists, now);
+  background(lists.commit(), 'default lists');
+}
+
 /** Every user gets a Personal workspace with the default lists. Safe to call on each sign-in. */
 export async function ensurePersonalWorkspace(user: SessionUser): Promise<string> {
   const id = personalWorkspaceId(user.uid);
@@ -85,10 +99,7 @@ export async function ensurePersonalWorkspace(user: SessionUser): Promise<string
     background(updateDoc(ref, { [`memberProfiles.${user.uid}`]: profileOf(user) }), 'update profile');
     return id;
   }
-  const batch = writeBatch(db());
-  batch.set(ref, clean(newWorkspaceDoc(user, 'Personal', 'personal', now)));
-  seedDefaultLists(id, batch, now);
-  background(batch.commit(), 'create personal workspace');
+  createWorkspace(id, newWorkspaceDoc(user, 'Personal', 'personal', now), now);
   return id;
 }
 
@@ -124,10 +135,7 @@ export function subscribeEmailInvites(
 export function createOrgWorkspace(user: SessionUser, name: string): string {
   const id = newId();
   const now = Date.now();
-  const batch = writeBatch(db());
-  batch.set(doc(db(), paths.workspace(id)), clean(newWorkspaceDoc(user, name.trim() || 'Organization', 'org', now)));
-  seedDefaultLists(id, batch, now);
-  background(batch.commit(), 'create organization');
+  createWorkspace(id, newWorkspaceDoc(user, name.trim() || 'Organization', 'org', now), now);
   return id;
 }
 

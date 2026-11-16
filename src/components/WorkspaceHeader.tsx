@@ -28,12 +28,13 @@ export function WorkspaceHeader({ title }: { title: string }) {
     { label: '⚙️ Manage workspaces…', onPress: () => router.push('/workspaces') },
   ];
 
-  const syncLabel = sync.pendingUploads
-    ? `⏳ ${sync.pendingUploads} upload${sync.pendingUploads === 1 ? '' : 's'} queued`
-    : sync.hasPendingWrites
-      ? '⏳ Syncing…'
-      : sync.fromCache
-        ? '☁️ Offline'
+  // Offline reflects real connectivity; Firestore keeps working from its cache meanwhile.
+  const syncLabel = !sync.online
+    ? '☁️ Offline'
+    : sync.pendingUploads
+      ? `⏳ ${sync.pendingUploads} upload${sync.pendingUploads === 1 ? '' : 's'} queued`
+      : sync.hasPendingWrites
+        ? '⏳ Syncing…'
         : '';
 
   return (
