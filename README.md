@@ -180,6 +180,18 @@ npx eas-cli@latest build -p android --profile production
 ```
 To build locally instead, which needs the Android SDK, run `npx expo run:android`.
 
+#### Local APK build on Windows
+Native (C++) builds break when paths are longer than 260 characters, so build from a very short folder such as `C:\t`:
+```powershell
+robocopy . C:\t /MIR /XD "$PWD\.git" "$PWD\android" "$PWD\.expo"   # includes google-services.json and .env.local
+cd C:\t
+npx expo prebuild --platform android --clean
+cd android
+.\gradlew.bat assembleDebug   -PreactNativeArchitectures=arm64-v8a   # dev client, needs `npx expo start --dev-client`
+.\gradlew.bat assembleRelease -PreactNativeArchitectures=arm64-v8a   # standalone APK
+```
+For `assembleRelease`, first add `externalNativeBuild { cmake { buildStagingDirectory = file('C:/c') } }` inside `android { … }` in `android/app/build.gradle`, because the release native folder name is longer. Local builds are signed with `android/app/debug.keystore`, so add that keystore's SHA-1 in Firebase (`.\gradlew.bat signingReport` shows it) or Google Sign-In will fail.
+
 On first launch, allow notifications. On Android 14 and later, also allow **Alarms & reminders** and **full-screen notifications** for todo-sync in system settings, so high-priority alarms can show over the lock screen.
 
 ## Development
