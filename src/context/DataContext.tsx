@@ -31,7 +31,7 @@ interface DataState {
   assignedToMe: Task[];
   loading: boolean;
   error: string | null;
-  sync: { online: boolean; hasPendingWrites: boolean; pendingUploads: number };
+  sync: { online: boolean; hasPendingWrites: boolean; pendingChanges: number; pendingUploads: number };
   refresh: () => Promise<void>;
   findTask: (id: string, workspaceId?: string) => Task | undefined;
 }
@@ -70,9 +70,11 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const [errorFor, setErrorFor] = useState<{ ws: string; message: string } | null>(null);
   const loaded = loadedFor.ws === activeId ? loadedFor.cols : NONE;
   const error = errorFor?.ws === activeId ? errorFor.message : null;
-  const [snapState, setSnapState] = useState<SnapshotState>({ fromCache: true, hasPendingWrites: false });
+  const [snapState, setSnapState] = useState<SnapshotState>({ fromCache: true, hasPendingWrites: false, pendingCount: 0 });
+  const [pendingByCol, setPendingByCol] = useState<Record<Col, number>>({ tasks: 0, lists: 0, ideas: 0, deliverables: 0 });
   const [pendingUploads, setPendingUploads] = useState(0);
   const [online, setOnline] = useState(true);
+  const onlineRef = useRef(true);
   const [attempt, setAttempt] = useState(0);
 
   const [assignedToMe, setAssigned] = useState<Task[] | null>(null);
@@ -81,7 +83,9 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   useEffect(
     () =>
       NetInfo.addEventListener((s) => {
-        setOnline(s.isConnected !== false && s.isInternetReachable !== false);
+        const isOnline = s.isConnected !== false && s.isInternetReachable !== false;
+        onlineRef.current = isOnline;
+        setOnline(isOnline);
       }),
     [],
   );
@@ -93,7 +97,11 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         if (l.ws === activeId && l.cols.tasks && l.cols.lists) return l;
         setErrorFor({
           ws: activeId,
-          message: workspaceError ?? 'Could not load your data. Check your connection and try again.',
+          message:
+            workspaceError ??
+            (onlineRef.current
+              ? 'Could not load your data. Check your connection and try again.'
+              : 'You’re offline and this workspace hasn’t been downloaded to this phone yet. Connect once to sync it.'),
         });
         return { ws: activeId, cols: { tasks: true, lists: true, ideas: true, deliverables: true } };
       });
@@ -112,8 +120,9 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       clearTimeout(retry);
       retry = setTimeout(() => setAttempt((a) => a + 1), RETRY_MS);
     };
-    const mark = (c: Col) => {
+    const mark = (c: Col, pendingCount: number) => {
       setErrorFor((e) => (e?.ws === activeId ? null : e));
+      setPendingByCol((p) => (p[c] === pendingCount ? p : { ...p, [c]: pendingCount }));
       setLoadedFor((l) =>
         l.ws === activeId ? (l.cols[c] ? l : { ws: activeId, cols: { ...l.cols, [c]: true } }) : { ws: activeId, cols: { ...NONE, [c]: true } },
       );
@@ -122,19 +131,19 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       subscribe<Task>(activeId, 'tasks', (items, st) => {
         setTasks(items);
         setSnapState(st);
-        mark('tasks');
+        mark('tasks', st.pendingCount);
       }, onErr),
-      subscribe<TaskList>(activeId, 'lists', (items) => {
+      subscribe<TaskList>(activeId, 'lists', (items, st) => {
         setLists(items.sort((a, b) => a.createdAt - b.createdAt || a.name.localeCompare(b.name)));
-        mark('lists');
+        mark('lists', st.pendingCount);
       }, onErr),
-      subscribe<Idea>(activeId, 'ideas', (items) => {
+      subscribe<Idea>(activeId, 'ideas', (items, st) => {
         setIdeas(items);
-        mark('ideas');
+        mark('ideas', st.pendingCount);
       }, onErr),
-      subscribe<Deliverable>(activeId, 'deliverables', (items) => {
+      subscribe<Deliverable>(activeId, 'deliverables', (items, st) => {
         setDeliverables(items);
-        mark('deliverables');
+        mark('deliverables', st.pendingCount);
       }, onErr),
     ];
     return () => {
@@ -185,6 +194,8 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   }, [ideas, settings, settingsLoaded, loaded.ideas]);
 
   const refresh = useCallback(async () => {
+    // Offline, pull-to-refresh has nothing to fetch; cached data stays on screen.
+    if (!onlineRef.current) return;
     // Resubscribe (recovers listeners stopped by an earlier error), then force a server round-trip.
     setAttempt((a) => a + 1);
     if (!ready) return;
@@ -192,11 +203,13 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       await refreshFromServer(activeId);
       setErrorFor(null);
     } catch (e) {
-      setErrorFor({ ws: activeId, message: e instanceof Error ? friendlyError(e) : 'Could not refresh.' });
+      // A failed refresh shouldn't replace data that's already on screen with an error.
+      console.warn('[sync] refresh failed', e);
     }
   }, [activeId, ready]);
 
   const allAssigned = useMemo(() => assignedToMe ?? [], [assignedToMe]);
+  const pendingChanges = pendingByCol.tasks + pendingByCol.lists + pendingByCol.ideas + pendingByCol.deliverables;
   const findTask = useCallback(
     (id: string, workspaceId?: string) =>
       tasks.find((t) => t.id === id && (!workspaceId || t.workspaceId === workspaceId)) ??
@@ -215,11 +228,16 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       assignedToMe: allAssigned,
       loading: !error && !(loaded.tasks && loaded.lists),
       error,
-      sync: { online, hasPendingWrites: snapState.hasPendingWrites, pendingUploads },
+      sync: {
+        online,
+        hasPendingWrites: snapState.hasPendingWrites || pendingChanges > 0,
+        pendingChanges,
+        pendingUploads,
+      },
       refresh,
       findTask,
     }),
-    [activeId, tasks, lists, ideas, deliverables, allAssigned, loaded, error, snapState, online, pendingUploads, refresh, findTask],
+    [activeId, tasks, lists, ideas, deliverables, allAssigned, loaded, error, snapState, online, pendingChanges, pendingUploads, refresh, findTask],
   );
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 }

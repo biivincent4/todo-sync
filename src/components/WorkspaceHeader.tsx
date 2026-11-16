@@ -29,12 +29,14 @@ export function WorkspaceHeader({ title }: { title: string }) {
   ];
 
   // Offline reflects real connectivity; Firestore keeps working from its cache meanwhile.
+  const waiting = sync.pendingChanges + sync.pendingUploads;
+  const waitingLabel = waiting ? ` · ${waiting} change${waiting === 1 ? '' : 's'} to sync` : '';
   const syncLabel = !sync.online
-    ? '☁️ Offline'
+    ? `☁️ Offline${waitingLabel}`
     : sync.pendingUploads
       ? `⏳ ${sync.pendingUploads} upload${sync.pendingUploads === 1 ? '' : 's'} queued`
       : sync.hasPendingWrites
-        ? '⏳ Syncing…'
+        ? `⏳ Syncing${sync.pendingChanges ? ` ${sync.pendingChanges}` : ''}…`
         : '';
 
   return (

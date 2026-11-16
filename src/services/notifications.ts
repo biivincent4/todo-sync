@@ -1,5 +1,4 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { doc, updateDoc } from '@react-native-firebase/firestore';
 import notifee, {
   AndroidCategory,
   AndroidImportance,
@@ -24,7 +23,7 @@ import {
   snoozeUntil,
 } from '../lib/reminders';
 import { AppSettings, Idea, Priority, PRIORITIES, Task } from '../lib/types';
-import { db, paths } from './firebase';
+import { completeTaskById } from './repo';
 
 const SCHEDULED_KEY = 'reminders:scheduled:v1';
 const PLAN_DAY_ID = 'plan-your-day';
@@ -163,14 +162,10 @@ export async function snoozeReminder(
 }
 
 export async function markTaskDone(workspaceId: string, taskId: string): Promise<void> {
-  const now = Date.now();
   const ids = (await notifee.getTriggerNotificationIds()).filter((id) => id.startsWith(`${taskId}:`));
   if (ids.length) await notifee.cancelTriggerNotifications(ids);
-  await updateDoc(doc(db(), paths.tasks(workspaceId), taskId), {
-    status: 'done',
-    completedAt: now,
-    updatedAt: now,
-  }).catch((e) => console.warn('[reminders] mark done failed', e));
+  // Shared with the board so repeating tasks get their next occurrence here too.
+  await completeTaskById(workspaceId, taskId).catch((e) => console.warn('[reminders] mark done failed', e));
 }
 
 async function settingsForBackground(): Promise<AppSettings> {

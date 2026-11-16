@@ -59,6 +59,20 @@ describe('planReminders', () => {
     expect(planReminders(assigned, settings, NOW, 'you')).toHaveLength(1);
     expect(planReminders(unassigned, settings, NOW, 'me')).toHaveLength(1);
   });
+
+  it('keeps hourly repeating tasks to one reminder per occurrence', () => {
+    const hourly = makeTask({
+      priority: 'high',
+      dueAt: NOW + 50 * MIN,
+      series: {
+        id: 's',
+        rule: { freq: 'hourly', interval: 1, anchor: NOW - 10 * MIN, end: { type: 'never' } },
+        template: { title: 'Drink water', notes: '', priority: 'high', listId: 'personal', deliverableId: null, assigneeId: null, attachments: [] },
+      },
+    });
+    // Default high leads are 1 day, 1 hour and 0: only "at due time" is shorter than the 1-hour gap.
+    expect(planReminders(hourly, settings, NOW, 'me').map((r) => r.leadMinutes)).toEqual([0]);
+  });
 });
 
 describe('diffReminders', () => {

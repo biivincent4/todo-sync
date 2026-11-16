@@ -4,17 +4,20 @@ import { Alert, ScrollView, StyleSheet, Switch, Text, View } from 'react-native'
 
 import { AttachmentSection } from '../../components/Attachments';
 import { DateTimeField } from '../../components/DateTimeField';
+import { RepeatDraft, RepeatEditor } from '../../components/RepeatEditor';
 import { PRIORITY_LABEL } from '../../components/TaskCard';
 import { Avatar, Button, Chip, Field, Label, OptionSheet } from '../../components/ui';
 import { useUser } from '../../context/AuthContext';
 import { useData } from '../../context/DataContext';
 import { useWorkspace } from '../../context/WorkspaceContext';
-import { dayKey } from '../../lib/dates';
+import { clock, dayKey } from '../../lib/dates';
 import { newId } from '../../lib/ids';
 import { isInMyDay } from '../../lib/myDay';
 import { sortMembers } from '../../lib/permissions';
+import { describeRule, RepeatRule, seriesStats } from '../../lib/recurrence';
+import { startSeries } from '../../lib/series';
 import { Attachment, PRIORITIES, Priority, Status, STATUS_LABEL, STATUSES, Task } from '../../lib/types';
-import { buildTask, deleteTask, saveTask, updateTask } from '../../services/repo';
+import { buildTask, createNextOccurrence, deleteTask, saveTask, skipOccurrence, updateTask } from '../../services/repo';
 import { processQueue } from '../../services/uploadQueue';
 import { useTheme } from '../../theme';
 
@@ -30,7 +33,7 @@ export default function TaskScreen() {
     myDay?: string;
   }>();
   const { workspaces, activeId } = useWorkspace();
-  const { findTask, lists, deliverables, ideas } = useData();
+  const { findTask, lists, deliverables, ideas, tasks } = useData();
 
   const isNew = params.id === 'new';
   const existing = isNew ? undefined : findTask(params.id, params.ws);
@@ -54,10 +57,15 @@ export default function TaskScreen() {
   const [inMyDay, setInMyDayState] = useState(
     existing ? isInMyDay(existing, user.uid, dayKey()) : params.myDay === '1',
   );
+  const [repeat, setRepeat] = useState<RepeatDraft | null>(existing?.series ? withoutAnchor(existing.series.rule) : null);
   const [sheet, setSheet] = useState<'deliverable' | 'assignee' | null>(null);
 
   const members = useMemo(() => (workspace ? sortMembers(workspace) : []), [workspace]);
   const sourceIdea = existing?.sourceIdeaId ? ideas.find((i) => i.id === existing.sourceIdeaId) : undefined;
+  const seriesId = existing?.series?.id;
+  const stats = seriesId
+    ? seriesStats(tasks.filter((t) => t.series?.id === seriesId).map((t) => ({ ...t, occurrence: t.occurrence ?? 0 })))
+    : null;
 
   if (!isNew && !existing) {
     return (
@@ -79,6 +87,22 @@ export default function TaskScreen() {
       Alert.alert('Title required', 'Give the task a title.');
       return;
     }
+    const ruleChanged =
+      !!existing?.series !== !!repeat ||
+      (!!existing?.series && JSON.stringify(withoutAnchor(existing.series.rule)) !== JSON.stringify(repeat));
+    if (existing?.series && repeat && !ruleChanged) {
+      Alert.alert('Repeating task', 'Apply these changes to…', [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'This occurrence', onPress: () => commit('one') },
+        { text: 'All future', onPress: () => commit('all') },
+      ]);
+      return;
+    }
+    commit('all');
+  };
+
+  const commit = (scope: 'one' | 'all') => {
+    const now = clock();
     const myDay = { ...(existing?.myDay ?? {}) };
     if (inMyDay) myDay[user.uid] = dayKey();
     else delete myDay[user.uid];
@@ -93,20 +117,25 @@ export default function TaskScreen() {
       attachments,
       myDay,
     };
-    if (existing) {
-      if (status !== existing.status) {
-        fields.status = status;
-        fields.completedAt = status === 'done' ? Date.now() : null;
-      }
-      updateTask(existing, fields);
-    } else {
-      const task = buildTask(
-        { workspaceId, createdBy: user.uid, title, listId, status },
-        Date.now(),
-        id,
-      );
-      saveTask({ ...task, ...fields });
+    if (existing && status !== existing.status) {
+      fields.status = status;
+      fields.completedAt = status === 'done' ? now : null;
+      if (status !== 'done') fields.skipped = false;
     }
+    const base = existing ?? buildTask({ workspaceId, createdBy: user.uid, title, listId, status }, now, id);
+    const merged: Task = { ...base, ...fields };
+    if (repeat) {
+      // A repeating task needs a due date to anchor the pattern.
+      if (merged.dueAt == null) merged.dueAt = nextFullHour(now);
+      // "This occurrence" keeps the series template; anything else updates it.
+      if (!existing?.series || scope === 'all') Object.assign(merged, startSeries(merged, repeat, now));
+    } else if (existing?.series) {
+      merged.series = null;
+    }
+    const seriesFields: Partial<Task> = { dueAt: merged.dueAt, series: merged.series ?? null, occurrence: merged.occurrence ?? 0 };
+    if (existing) updateTask(existing, { ...fields, ...seriesFields });
+    else saveTask(merged);
+    if (merged.status === 'done' && existing?.status !== 'done') createNextOccurrence(merged, now);
     processQueue();
     router.back();
   };
@@ -190,6 +219,31 @@ export default function TaskScreen() {
           </>
         ) : null}
 
+        <RepeatEditor value={repeat} dueAt={dueAt} onChange={setRepeat} />
+        {existing?.series ? (
+          <View style={[styles.seriesBox, { backgroundColor: c.surfaceAlt }]}>
+            <Text style={{ color: c.text, fontWeight: '600' }}>🔁 {describeRule(existing.series.rule)}</Text>
+            {stats ? (
+              <Text style={{ color: c.textMuted, marginTop: 4 }}>
+                Occurrence {(existing.occurrence ?? 0) + 1} · ✅ {stats.completed} done
+                {stats.skipped ? ` · ⏭ ${stats.skipped} skipped` : ''} · 🔥 streak {stats.streak}
+              </Text>
+            ) : null}
+            {existing.status !== 'done' ? (
+              <Button
+                small
+                variant="secondary"
+                title="⏭ Skip this occurrence"
+                onPress={() => {
+                  skipOccurrence(existing);
+                  router.back();
+                }}
+                style={{ alignSelf: 'flex-start', marginTop: 8 }}
+              />
+            ) : null}
+          </View>
+        ) : null}
+
         <View style={[styles.switchRow, { borderColor: c.border }]}>
           <Text style={{ color: c.text, fontSize: 15 }}>☀️ In My Day</Text>
           <Switch value={inMyDay} onValueChange={setInMyDayState} />
@@ -262,4 +316,17 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  seriesBox: { borderRadius: 10, padding: 12, marginBottom: 12 },
 });
+
+function withoutAnchor(rule: RepeatRule): RepeatDraft {
+  const rest: RepeatDraft & { anchor?: number } = { ...rule };
+  delete rest.anchor;
+  return rest;
+}
+
+function nextFullHour(now: number): number {
+  const d = new Date(now);
+  d.setHours(d.getHours() + 1, 0, 0, 0);
+  return d.getTime();
+}

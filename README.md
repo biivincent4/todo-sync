@@ -28,10 +28,29 @@ An Android-first to-do app built with React Native (Expo) and TypeScript. It inc
   - You can switch to priority, created date or manual sort. Your choice is saved.
   - You can reorder cards by dragging within a column only in manual sort. Dragging between columns always works.
 
-### Sync
-- Uses Firestore with offline persistence. The app works offline and syncs automatically when you reconnect, and changes appear on other devices in real time.
-- Status changes and card order sync too.
-- Pull down to refresh. The header shows Offline, Syncing and queued-upload states.
+### Repeating tasks
+- Set **Repeat** on any task:
+  - every N hours, optionally only within a daily window such as 08:00–20:00
+  - several times a day at set times, such as 08:00, 13:00 and 18:00
+  - daily or every N days
+  - on chosen weekdays, or every N weeks
+  - monthly or yearly, every N months or years
+- A series can end **never**, **on a date**, or **after N times**.
+- Each occurrence is a normal card with a 🔁 badge. Moving it to Done (or tapping **Mark done** on a reminder) creates the next occurrence with the same priority, reminders, list, deliverable, assignee and attachments.
+- The next occurrence's id is built from the series id and occurrence number. Completing the same occurrence twice, offline or on two devices, updates one task instead of creating a duplicate.
+- If you complete a task late, missed past slots are skipped, so an hourly task never piles up a backlog.
+- **⏭ Skip this occurrence** moves on without counting it as done.
+- When editing, you choose whether changes apply to **this occurrence** or **all future** ones.
+- The task screen shows the pattern, how many occurrences are done or skipped, and your current streak.
+- Reminders are only scheduled for the next occurrence. Lead times at least as long as the gap between occurrences are dropped, so an hourly task gets one reminder per hour.
+- My Day suggests occurrences that are due today or overdue.
+
+### Sync and offline use
+- After the first sign-in, the app works fully offline, including starting with no network. It uses Firestore's local cache and the last-known workspace list saved on the phone.
+- Changes made offline show up immediately and sync automatically when you're back online.
+- The header shows **☁️ Offline · N changes to sync** while offline, and **Syncing** while queued changes upload. Offline is based on the phone's actual network connection.
+- Status changes and card order sync too, and changes from other devices appear in real time.
+- Pull down to refresh when online. Offline, the screen keeps showing the saved data.
 
 ### My Day
 - A board with only the tasks you planned for today. My Day is per user, so in a shared organization each member has their own.
@@ -103,7 +122,8 @@ firestore.rules, storage.rules, firestore.indexes.json, firebase.json
 ### Firestore data model
 ```
 workspaces/{wsId}                 name, type (personal|org), ownerId, members{uid: role}, memberIds[], memberProfiles{}, invitedEmails[], inviteCode
-workspaces/{wsId}/tasks/{id}      ...task fields, workspaceId, assigneeId, createdBy, myDay{uid: "YYYY-MM-DD"}
+workspaces/{wsId}/tasks/{id}      ...task fields, workspaceId, assigneeId, createdBy, myDay{uid: "YYYY-MM-DD"},
+                                  series{id, rule, template}, occurrence, skipped   (repeating tasks; ids {seriesId}~{n})
 workspaces/{wsId}/lists/{id}
 workspaces/{wsId}/ideas/{id}      ...including versions[], checklist[], convertedTaskIds[]
 workspaces/{wsId}/deliverables/{id}
@@ -199,7 +219,8 @@ On first launch, allow notifications. On Android 14 and later, also allow **Alar
 npm run typecheck   # tsc --noEmit
 npm run lint        # eslint (eslint-config-expo)
 npm test            # jest: sorting, filters, My Day suggestions, reminder scheduling,
-                    #       idea conversion and versions, deliverable progress and risk, roles
+                    #       idea conversion and versions, deliverable progress and risk, roles,
+                    #       recurrence (patterns, windows, end conditions, DST, month-end) and idempotent occurrences
 ```
 
 Invite links use the scheme `todosync://join?code=XXXXXXXX`.

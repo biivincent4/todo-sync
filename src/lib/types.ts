@@ -1,3 +1,5 @@
+import type { RepeatRule } from './recurrence';
+
 export type Priority = 'low' | 'medium' | 'high';
 export type Status = 'todo' | 'doing' | 'done';
 export type SortMode = 'due' | 'priority' | 'created' | 'manual';
@@ -80,6 +82,25 @@ export interface Task {
   updatedAt: number;
   completedAt: number | null;
   sourceIdeaId: string | null;
+  /** Repeating tasks: the series this occurrence belongs to (null for one-off tasks). */
+  series?: TaskSeries | null;
+  /** 0-based index of this occurrence in its series. */
+  occurrence?: number;
+  /** Closed by "Skip this occurrence" rather than completed. */
+  skipped?: boolean;
+}
+
+/** Fields every new occurrence copies; "edit whole series" changes these. */
+export type SeriesTemplate = Pick<
+  Task,
+  'title' | 'notes' | 'priority' | 'listId' | 'deliverableId' | 'assigneeId' | 'attachments'
+>;
+
+export interface TaskSeries {
+  /** Id of the first occurrence; later occurrences are `${id}~${index}`. */
+  id: string;
+  rule: RepeatRule;
+  template: SeriesTemplate;
 }
 
 export interface TaskList {

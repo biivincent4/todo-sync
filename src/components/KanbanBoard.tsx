@@ -19,7 +19,7 @@ import { EMPTY_FILTER, filterTasks, isFilterActive, TaskFilter } from '../lib/fi
 import { isInMyDay } from '../lib/myDay';
 import { canReorderWithinColumn, orderForDrop, sortTasks } from '../lib/sort';
 import { Status, STATUS_LABEL, STATUSES, Task } from '../lib/types';
-import { deleteTask, moveTask, setInMyDay } from '../services/repo';
+import { deleteTask, moveTask, setInMyDay, skipOccurrence } from '../services/repo';
 import { useTheme } from '../theme';
 import { FilterBar } from './FilterBar';
 import { TaskCard } from './TaskCard';
@@ -214,6 +214,9 @@ export function KanbanBoard({
         isInMyDay(menuTask, user.uid, today)
           ? { label: 'Remove from My Day', onPress: () => setInMyDay(menuTask, user.uid, false) }
           : { label: 'Add to My Day ☀️', onPress: () => setInMyDay(menuTask, user.uid, true) },
+        ...(menuTask.series && menuTask.status !== 'done'
+          ? [{ label: '⏭ Skip this occurrence', onPress: () => skipOccurrence(menuTask) }]
+          : []),
         { label: 'Edit', onPress: () => router.push(`/task/${menuTask.id}?ws=${menuTask.workspaceId}`) },
         { label: 'Delete', destructive: true, onPress: () => deleteTask(menuTask) },
       ]

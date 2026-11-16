@@ -19,6 +19,7 @@ import { newId, newInviteCode } from '../lib/ids';
 import { normalizeEmail, personalWorkspaceId } from '../lib/permissions';
 import { DEFAULT_LISTS, MemberProfile, Role, Workspace } from '../lib/types';
 import { background, clean, db, paths } from './firebase';
+import { isPersonalWorkspaceKnown, markPersonalWorkspaceKnown } from './settingsStore';
 
 export interface SessionUser {
   uid: string;
@@ -88,30 +89,34 @@ function createWorkspace(id: string, data: ReturnType<typeof newWorkspaceDoc>, n
 export async function ensurePersonalWorkspace(user: SessionUser): Promise<string> {
   const id = personalWorkspaceId(user.uid);
   const ref = doc(db(), paths.workspace(id));
-  let exists = false;
+  let exists: boolean | null = null;
   try {
     exists = (await getDoc(ref)).exists();
   } catch {
-    // Offline on a fresh install: fall through and create it locally; it syncs later.
+    // Offline and not in the local cache.
   }
   const now = Date.now();
   if (exists) {
+    markPersonalWorkspaceKnown(user.uid).catch(() => undefined);
     background(updateDoc(ref, { [`memberProfiles.${user.uid}`]: profileOf(user) }), 'update profile');
     return id;
   }
+  // Offline after it was already created on this phone: don't overwrite it.
+  if (exists === null && (await isPersonalWorkspaceKnown(user.uid))) return id;
   createWorkspace(id, newWorkspaceDoc(user, 'Personal', 'personal', now), now);
+  markPersonalWorkspaceKnown(user.uid).catch(() => undefined);
   return id;
 }
 
 export function subscribeWorkspaces(
   uid: string,
-  onData: (ws: Workspace[]) => void,
+  onData: (ws: Workspace[], fromCache: boolean) => void,
   onError: (e: Error) => void,
 ): () => void {
   const q = query(collection(db(), 'workspaces'), where('memberIds', 'array-contains', uid));
   return onSnapshot(
     q,
-    (snap) => onData(snap.docs.map((d) => toWorkspace(d.id, d.data()))),
+    (snap) => onData(snap.docs.map((d) => toWorkspace(d.id, d.data())), snap.metadata.fromCache),
     onError,
   );
 }

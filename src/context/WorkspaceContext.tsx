@@ -2,7 +2,12 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 
 import { personalWorkspaceId, roleOf } from '../lib/permissions';
 import { Role, Workspace } from '../lib/types';
-import { loadActiveWorkspace, saveActiveWorkspace } from '../services/settingsStore';
+import {
+  loadActiveWorkspace,
+  loadCachedWorkspaces,
+  saveActiveWorkspace,
+  saveCachedWorkspaces,
+} from '../services/settingsStore';
 import { ensurePersonalWorkspace, subscribeEmailInvites, subscribeWorkspaces } from '../services/workspaces';
 import { useUser } from './AuthContext';
 
@@ -30,17 +35,30 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
+    let cancelled = false;
+    let gotSnapshot = false;
     ensurePersonalWorkspace(user).catch((e) => console.warn('[workspace] personal', e));
     loadActiveWorkspace(user.uid).then((id) => id && setActiveId(id));
+    // Start from the last-known workspaces so an offline cold start works immediately.
+    loadCachedWorkspaces<Workspace>(user.uid).then((cached) => {
+      if (cancelled || gotSnapshot || !cached?.length) return;
+      setWorkspaces(cached);
+      setLoading(false);
+    });
     let retry: ReturnType<typeof setTimeout> | undefined;
     const unsub = subscribeWorkspaces(
       user.uid,
-      (ws) => {
-        setWorkspaces(
-          ws.sort((a, b) => (a.type === 'personal' ? -1 : b.type === 'personal' ? 1 : a.name.localeCompare(b.name))),
+      (ws, fromCache) => {
+        // An empty answer from the local cache only means nothing is cached yet.
+        if (fromCache && ws.length === 0) return;
+        gotSnapshot = true;
+        const sorted = ws.sort((a, b) =>
+          a.type === 'personal' ? -1 : b.type === 'personal' ? 1 : a.name.localeCompare(b.name),
         );
+        setWorkspaces(sorted);
         setLoading(false);
         setError(null);
+        saveCachedWorkspaces(user.uid, sorted).catch(() => undefined);
       },
       (e) => {
         setError(e.message);
@@ -51,6 +69,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     );
     const unsubInv = user.email ? subscribeEmailInvites(user.email, setInvites) : () => undefined;
     return () => {
+      cancelled = true;
       clearTimeout(retry);
       unsub();
       unsubInv();

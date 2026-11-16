@@ -63,6 +63,7 @@ export function TaskCard({
               <Text style={[styles.pillText, { color: c.primary }]}>{workspaceName}</Text>
             </View>
           ) : null}
+          {task.series ? <Text style={[styles.metaText, { color: c.textMuted }]}>🔁</Text> : null}
           {task.attachments.length > 0 ? (
             <Text style={[styles.metaText, { color: c.textMuted }]}>📎 {task.attachments.length}</Text>
           ) : null}

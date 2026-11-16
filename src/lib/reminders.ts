@@ -1,3 +1,4 @@
+import { periodMinutes } from './recurrence';
 import { Priority, PriorityReminderSettings, ReminderSettings, Task } from './types';
 
 export interface PlannedReminder {
@@ -29,7 +30,8 @@ export function reminderRecipient(task: Pick<Task, 'assigneeId' | 'createdBy'>):
 type PlanFields = Pick<
   Task,
   'id' | 'workspaceId' | 'title' | 'dueAt' | 'priority' | 'status' | 'assigneeId' | 'createdBy'
->;
+> &
+  Partial<Pick<Task, 'series'>>;
 
 /** Pure reminder plan for one task: one entry per configured lead time still in the future. */
 export function planReminders(
@@ -43,7 +45,12 @@ export function planReminders(
   const s = settings[task.priority];
   const channelId = channelIdFor(task.priority, s);
   const dueAt = task.dueAt;
-  const leads = [...new Set(s.leadMinutes)].filter((m) => m >= 0).sort((a, b) => b - a);
+  // Repeating tasks: a lead time as long as the gap between occurrences would remind about this one while the
+  // previous is still running (an hourly task with a 1-day lead), so only shorter leads are kept.
+  const period = task.series ? periodMinutes(task.series.rule) : Infinity;
+  const leads = [...new Set(s.leadMinutes)]
+    .filter((m) => m >= 0 && (m === 0 || m < period))
+    .sort((a, b) => b - a);
   return leads
     .map((lead) => ({
       id: reminderId(task.id, lead),

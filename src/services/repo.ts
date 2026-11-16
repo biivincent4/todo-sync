@@ -4,6 +4,8 @@ import {
   deleteDoc,
   deleteField,
   doc,
+  getDoc,
+  getDocFromCache,
   getDocsFromServer,
   onSnapshot,
   query,
@@ -15,6 +17,7 @@ import {
 
 import { dayKey } from '../lib/dates';
 import { newId } from '../lib/ids';
+import { closeOccurrence } from '../lib/series';
 import {
   Attachment,
   Deliverable,
@@ -31,6 +34,8 @@ import { enqueueStorageDeletes } from './uploadQueue';
 export interface SnapshotState {
   fromCache: boolean;
   hasPendingWrites: boolean;
+  /** Documents in this snapshot with local changes not yet on the server. */
+  pendingCount: number;
 }
 
 type Col = 'tasks' | 'lists' | 'ideas' | 'deliverables';
@@ -56,6 +61,9 @@ function normalizeTask(id: string, ws: string, d: Record<string, unknown>): Task
     updatedAt: t.updatedAt ?? 0,
     completedAt: t.completedAt ?? null,
     sourceIdeaId: t.sourceIdeaId ?? null,
+    series: t.series ?? null,
+    occurrence: t.occurrence ?? 0,
+    skipped: t.skipped ?? false,
   };
 }
 
@@ -110,7 +118,11 @@ export function subscribe<T>(
     (snap) => {
       onData(
         snap.docs.map((d) => normalize(col, d.id, ws, d.data()) as T),
-        { fromCache: snap.metadata.fromCache, hasPendingWrites: snap.metadata.hasPendingWrites },
+        {
+          fromCache: snap.metadata.fromCache,
+          hasPendingWrites: snap.metadata.hasPendingWrites,
+          pendingCount: snap.docs.filter((d) => d.metadata.hasPendingWrites).length,
+        },
       );
     },
     onError,
@@ -211,6 +223,43 @@ export function moveTask(task: Task, status: Status, order?: number): void {
   if (status !== task.status) patch.completedAt = status === 'done' ? Date.now() : null;
   if (order != null) patch.order = order;
   updateTask(task, patch);
+  if (status === 'done' && task.status !== 'done') createNextOccurrence(task);
+  if (status !== 'done' && task.skipped) updateTask(task, { skipped: false });
+}
+
+/**
+ * Create the occurrence after `task` if it doesn't exist yet. Its id is
+ * deterministic, so a second completion (offline, or on another device) at most
+ * rewrites the same document; checking the local cache first also keeps edits
+ * already made to that next occurrence. Nothing here waits for the server.
+ */
+export function createNextOccurrence(task: Task, now = Date.now()): void {
+  const { next } = closeOccurrence(task, 'complete', now);
+  if (!next) return;
+  const ref = taskRef(next);
+  getDocFromCache(ref)
+    .then((snap) => snap.exists())
+    .catch(() => false)
+    .then((exists) => {
+      if (!exists) background(setDoc(ref, clean(next)), 'next occurrence');
+    });
+}
+
+/** Close this occurrence without completing it and move on to the next one. */
+export function skipOccurrence(task: Task): void {
+  const now = Date.now();
+  const { patch } = closeOccurrence(task, 'skip', now);
+  updateTask(task, patch);
+  createNextOccurrence(task, now);
+}
+
+/** Close a task by id from a notification action (works offline from the cache). */
+export async function completeTaskById(workspaceId: string, taskId: string): Promise<void> {
+  const ref = doc(db(), paths.tasks(workspaceId), taskId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return;
+  const task = normalizeTask(snap.id, workspaceId, snap.data() as Record<string, unknown>);
+  if (task.status !== 'done') moveTask(task, 'done');
 }
 
 export function setInMyDay(task: Task, uid: string, inMyDay: boolean): void {
@@ -230,7 +279,8 @@ export function ownedStoragePaths(attachments: readonly Attachment[]): string[] 
 
 export function deleteTask(task: Task): void {
   background(deleteDoc(taskRef(task)), 'delete task');
-  enqueueStorageDeletes(ownedStoragePaths(task.attachments));
+  // Occurrences of a repeating task share attachment files, so keep them.
+  if (!task.series) enqueueStorageDeletes(ownedStoragePaths(task.attachments));
 }
 
 // ---------- Lists ----------

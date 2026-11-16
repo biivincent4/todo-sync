@@ -34,3 +34,29 @@ export async function loadActiveWorkspace(uid: string): Promise<string | null> {
 export async function saveActiveWorkspace(uid: string, id: string): Promise<void> {
   await AsyncStorage.setItem(`${ACTIVE_WS_KEY}:${uid}`, id);
 }
+
+const WORKSPACES_KEY = 'workspaces:v1';
+
+/** Last-known workspaces and membership, so the app can start offline. */
+export async function loadCachedWorkspaces<T>(uid: string): Promise<T[] | null> {
+  try {
+    const raw = await AsyncStorage.getItem(`${WORKSPACES_KEY}:${uid}`);
+    return raw ? (JSON.parse(raw) as T[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveCachedWorkspaces<T>(uid: string, workspaces: T[]): Promise<void> {
+  await AsyncStorage.setItem(`${WORKSPACES_KEY}:${uid}`, JSON.stringify(workspaces));
+}
+
+const PERSONAL_KEY = 'personalWorkspaceReady:v1';
+
+export async function isPersonalWorkspaceKnown(uid: string): Promise<boolean> {
+  return (await AsyncStorage.getItem(`${PERSONAL_KEY}:${uid}`)) === '1';
+}
+
+export async function markPersonalWorkspaceKnown(uid: string): Promise<void> {
+  await AsyncStorage.setItem(`${PERSONAL_KEY}:${uid}`, '1');
+}

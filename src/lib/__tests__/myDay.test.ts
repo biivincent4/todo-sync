@@ -45,6 +45,20 @@ describe('My Day', () => {
     expect(getSuggestions(tasks, 'me', NOW).map((x) => x.task.id)).toEqual(['mineAssigned']);
   });
 
+  it('suggests the occurrence of a repeating task that is due today', () => {
+    const occurrence = makeTask({
+      id: 'water~3',
+      dueAt: NOW + 3 * H,
+      occurrence: 3,
+      series: {
+        id: 'water',
+        rule: { freq: 'daily', interval: 1, anchor: NOW - 72 * H, end: { type: 'never' } },
+        template: { title: 'Water plants', notes: '', priority: 'low', listId: 'personal', deliverableId: null, assigneeId: null, attachments: [] },
+      },
+    });
+    expect(getSuggestions([occurrence], 'me', NOW).map((x) => [x.task.id, x.reason])).toEqual([['water~3', 'today']]);
+  });
+
   it('reports progress', () => {
     const tasks = [makeTask({ status: 'done' }), makeTask(), makeTask({ status: 'doing' })];
     expect(myDayProgress(tasks)).toEqual({ done: 1, total: 3, label: '1 of 3 done' });
