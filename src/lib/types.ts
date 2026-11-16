@@ -23,6 +23,8 @@ export interface StoredFileAttachment extends AttachmentBase {
   storagePath: string;
   url?: string | null;
   uploadState: UploadState;
+  /** Why the upload failed (when uploadState is 'failed'). */
+  uploadError?: string | null;
   /** True when the file is owned by another document (e.g. a task created from an idea). */
   borrowed?: boolean;
 }

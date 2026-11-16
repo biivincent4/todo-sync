@@ -78,7 +78,69 @@ function errorCode(e: unknown): string | undefined {
   return typeof e === 'object' && e && 'code' in e ? String((e as { code: unknown }).code) : undefined;
 }
 
+export const STORAGE_UNAVAILABLE_MESSAGE =
+  'File, photo and voice-note attachments need Firebase Storage, which isn’t set up for this Firebase project ' +
+  '(new Storage buckets need the Blaze plan). Contacts, links and locations still work.';
+
+const STORAGE_FLAG_KEY = 'storageUnavailableUntil:v1';
+// Re-check periodically, so enabling Storage later starts working without reinstalling.
+const STORAGE_RECHECK_MS = 6 * 3_600_000;
+let storageUnavailableUntil = 0;
+
+async function loadStorageStatus(): Promise<void> {
+  storageUnavailableUntil = Number((await AsyncStorage.getItem(STORAGE_FLAG_KEY)) ?? 0) || 0;
+}
+
+/** True when a recent upload showed that the project has no Storage bucket. */
+export function storageKnownUnavailable(): boolean {
+  return Date.now() < storageUnavailableUntil;
+}
+
+function markStorageUnavailable(): void {
+  storageUnavailableUntil = Date.now() + STORAGE_RECHECK_MS;
+  AsyncStorage.setItem(STORAGE_FLAG_KEY, String(storageUnavailableUntil)).catch(() => undefined);
+}
+
+/** Message for upload errors that retrying won't fix, or null for transient ones. */
+function permanentUploadError(e: unknown): string | null {
+  const code = errorCode(e) ?? '';
+  const message = e instanceof Error ? e.message : String(e);
+  if (
+    ['storage/bucket-not-found', 'storage/project-not-found', 'storage/no-default-bucket'].includes(code) ||
+    /bucket|not been set up|has not been enabled/i.test(message)
+  ) {
+    markStorageUnavailable();
+    return STORAGE_UNAVAILABLE_MESSAGE;
+  }
+  if (code === 'storage/unauthorized') return 'You don’t have permission to upload to this workspace.';
+  if (code === 'storage/quota-exceeded') return 'The Firebase Storage quota is used up.';
+  if (code === 'storage/invalid-argument' || code === 'storage/invalid-url') return `Upload failed: ${message}`;
+  return null;
+}
+
+/** Record a failed upload on its attachment so the UI stops showing it as pending. */
+async function markUploadFailed(op: Extract<QueueOp, { type: 'upload' }>, reason: string): Promise<void> {
+  const owner = ownerRef(op.owner);
+  await runTransaction(db(), async (tx) => {
+    const cur = await tx.get(owner);
+    if (!cur.exists()) return;
+    const atts = ((cur.data()?.attachments ?? []) as Attachment[]).map((a) =>
+      a.id === op.attachmentId ? { ...a, uploadState: 'failed' as const, uploadError: reason } : a,
+    );
+    tx.update(owner, { attachments: atts });
+  });
+  try {
+    new File(op.localUri).delete();
+  } catch {
+    // Already gone.
+  }
+}
+
 async function runUpload(op: Extract<QueueOp, { type: 'upload' }>): Promise<'done' | 'retry'> {
+  if (storageKnownUnavailable()) {
+    await markUploadFailed(op, STORAGE_UNAVAILABLE_MESSAGE);
+    return 'done';
+  }
   const owner = ownerRef(op.owner);
   const snap = await getDoc(owner);
   if (!snap.exists()) {
@@ -86,8 +148,16 @@ async function runUpload(op: Extract<QueueOp, { type: 'upload' }>): Promise<'don
     return op.attempts >= 3 ? 'done' : 'retry';
   }
   const fileRef = ref(storage(), op.storagePath);
-  await putFile(fileRef, op.localUri, op.mimeType ? { contentType: op.mimeType } : undefined);
-  const url = await getDownloadURL(fileRef);
+  let url: string;
+  try {
+    await putFile(fileRef, op.localUri, op.mimeType ? { contentType: op.mimeType } : undefined);
+    url = await getDownloadURL(fileRef);
+  } catch (e) {
+    const permanent = permanentUploadError(e);
+    if (!permanent) throw e;
+    await markUploadFailed(op, permanent);
+    return 'done';
+  }
   let found = false;
   await runTransaction(db(), async (tx) => {
     const cur = await tx.get(owner);
@@ -138,8 +208,14 @@ export async function processQueue(): Promise<void> {
         } catch (e) {
           console.warn('[uploads] op failed', op.type, e);
         }
+        const exhausted = result !== 'done' && op.attempts + 1 >= MAX_ATTEMPTS;
+        if (exhausted && op.type === 'upload') {
+          await markUploadFailed(op, 'Upload failed after several tries. Remove the attachment and add it again.').catch(
+            () => undefined,
+          );
+        }
         await mutate((ops) =>
-          result === 'done' || op.attempts + 1 >= MAX_ATTEMPTS
+          result === 'done' || exhausted
             ? ops.filter((o) => o.id !== op.id)
             : ops.map((o) => (o.id === op.id ? { ...o, attempts: o.attempts + 1 } : o)),
         );
@@ -152,7 +228,7 @@ export async function processQueue(): Promise<void> {
 
 /** Retry the queue whenever connectivity returns. */
 export function startUploadQueue(): () => void {
-  processQueue();
+  loadStorageStatus().finally(processQueue);
   return NetInfo.addEventListener((s) => {
     if (s.isConnected) processQueue();
   });

@@ -16,7 +16,7 @@ import {
 } from '../lib/types';
 import { paths } from './firebase';
 import type { AttachmentOwner } from './uploadQueue';
-import { enqueueUpload } from './uploadQueue';
+import { enqueueUpload, STORAGE_UNAVAILABLE_MESSAGE, storageKnownUnavailable } from './uploadQueue';
 
 export class AttachmentError extends Error {}
 
@@ -120,6 +120,9 @@ export function addStoredFile(
   owner: AttachmentOwner,
 ): StoredFileAttachment {
   const size = fileSize(picked.uri, picked.size);
+  if (storageKnownUnavailable()) {
+    throw new AttachmentError(STORAGE_UNAVAILABLE_MESSAGE);
+  }
   if (size != null && size > MAX_FILE_BYTES) {
     throw new AttachmentError('Files must be 25 MB or smaller.');
   }

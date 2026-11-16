@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import React, { useCallback, useMemo, useState } from 'react';
-import { FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { VoiceRecorder } from '../../components/Attachments';
 import { Button, Chip, ChipRow, EmptyState, ErrorState, LoadingState, OptionSheet } from '../../components/ui';
@@ -35,8 +35,14 @@ export default function IdeasScreen() {
 
   const captureVoice = (file: PickedFile) => {
     const idea = newIdea({ title: `Voice idea ${new Date().toLocaleString()}`, workspaceId, createdBy: user.uid }, Date.now());
-    const att = addStoredFile('audio', file, { col: 'ideas', workspaceId, id: idea.id });
-    saveIdea({ ...idea, attachments: [att] });
+    try {
+      const att = addStoredFile('audio', file, { col: 'ideas', workspaceId, id: idea.id });
+      saveIdea({ ...idea, attachments: [att] });
+    } catch (e) {
+      // Keep the idea even if the recording can't be uploaded.
+      saveIdea(idea);
+      Alert.alert('Voice note not saved', e instanceof Error ? e.message : String(e));
+    }
   };
 
   const onRefresh = useCallback(async () => {

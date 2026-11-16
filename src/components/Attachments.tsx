@@ -100,6 +100,12 @@ export function AttachmentSection({
       opts.push({ label: 'Open in browser', onPress: () => openAttachment(a) });
     } else if (isStoredFile(a)) {
       if (a.url) opts.push({ label: 'Open', onPress: () => openAttachment(a) });
+      if (a.uploadState === 'failed') {
+        opts.push({
+          label: '⚠️ Why didn’t this upload?',
+          onPress: () => Alert.alert('Upload failed', a.uploadError ?? 'The file could not be uploaded.'),
+        });
+      }
     }
     opts.push({ label: 'Remove attachment', destructive: true, onPress: () => remove(a) });
     return opts;
@@ -118,6 +124,7 @@ export function AttachmentSection({
             <Text numberOfLines={1} style={{ color: c.text, maxWidth: 180 }}>
               {ICON[a.kind]} {a.name}
               {isStoredFile(a) && a.uploadState === 'pending' ? ' ⏳' : ''}
+              {isStoredFile(a) && a.uploadState === 'failed' ? ' ⚠️' : ''}
             </Text>
           </Pressable>
         ))}
