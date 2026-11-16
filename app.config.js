@@ -37,7 +37,16 @@ module.exports = {
     '@react-native-firebase/app',
     '@react-native-firebase/auth',
     '@react-native-google-signin/google-signin',
-    ['expo-build-properties', { android: { extraMavenRepos: ['../../node_modules/@notifee/react-native/android/libs'] } }],
+    [
+      'expo-build-properties',
+      {
+        android: {
+          // React Native Firebase 27's Firebase BoM ships Kotlin 2.4 metadata; older compilers can't read it.
+          kotlinVersion: '2.4.0',
+          extraMavenRepos: ['../../node_modules/@notifee/react-native/android/libs'],
+        },
+      },
+    ],
     ['expo-image-picker', { cameraPermission: 'Allow todo-sync to take photos for your tasks and ideas.', photosPermission: 'Allow todo-sync to attach photos to your tasks and ideas.' }],
     ['expo-contacts', { contactsPermission: 'Allow todo-sync to attach contacts to your tasks and ideas.' }],
     ['expo-location', { locationWhenInUsePermission: 'Allow todo-sync to attach your current location to a task or idea.' }],
